@@ -51,12 +51,12 @@ Installed by copying or symlinking the `motion-to-prompt/` directory into `~/.cl
    - Any other URL → downloaded with `yt-dlp` (best video, no audio needed).
    - Prints the absolute path of the local file on stdout. Errors go to stderr with a non-zero exit.
 2. **`analyze.py <video> --out <motion-prompts/name> [--start s] [--end s]`**
-   - Normalizes the input to a constant-fps MP4 (handles GIF variable frame delays). The working copy is written to the output dir and deleted when the run finishes.
+   - Decodes the range at a constant fps through ffmpeg's `fps` filter (handles GIF variable frame delays); no working copy is written.
    - **Metadata:** duration, fps, width, height, `loops` (first vs last frame difference below the threshold).
-   - **Motion timeline:** per-frame mean absolute difference computed on downscaled grayscale raw frames (`ffmpeg -f rawvideo -pix_fmt gray`, about 160px wide), smoothed, and thresholded into `motion` / `rest` segments with `start_ms`, `end_ms`, and `duration_ms`. Segments shorter than 2 frames merge into their neighbours.
+   - **Motion timeline:** per-frame differences on downscaled grayscale raw frames (`ffmpeg -f rawvideo -pix_fmt gray`, 160px wide). A transition is motion if enough pixels change by more than 12 grey levels, or if pixels keep changing a little (more than encoder ±1 noise) and add up to a clear change over a 200ms window (fades, eased tails; flagged `subtle`). Rests shorter than 100ms between motion merge into it; 1-frame blips are dropped unless large enough to be a cut. Each `motion` / `rest` segment has `start_ms`, `end_ms` and `duration_ms`; motion segments also carry an `intensity_profile` (sum of absolute differences per frame, 12 bins), an `easing_hint`, and `jumps` (single-frame pops inside the segment, with time and region).
    - **Motion regions:** a bounding box (as a fraction of the frame) of pixels that changed in each motion segment.
    - **Keyframes:** first frame, then the start/mid/end of each motion segment, then the last frame, deduplicated and capped at 20 (when over the cap, the mid frames of the shortest segments are dropped first). Saved full-resolution as `frames/NN_<t>ms.png`.
-   - **Palette:** 6 dominant colours as hex, from a downscaled frame quantized with ffmpeg `palettegen`.
+   - **Palette:** up to 6 dominant colours as hex, from 3 nearest-neighbour-downscaled frames, bucketed with near-identical shades (RGB distance ≤ 32) merged.
    - Writes `analysis.json` holding all of the above.
 3. **Claude (per SKILL.md)**
    - Reads `analysis.json` and views the keyframes.
@@ -85,7 +85,8 @@ The header line states: *"Timings are measured from the recording; element ident
 - `yt-dlp` missing and needed → exit with `brew install yt-dlp` / `pipx install yt-dlp` hint.
 - Download failure (private post, login wall, 404) → message suggesting a manual download and passing the path.
 - Unreadable or corrupt file → rejected by the `ffprobe` check before analysis.
-- Longer than 60s with no range given → analyse the first 60s and warn; `--start/--end` override this.
+- Longer than 3:00 → rejected outright with a trim hint, by both scripts. For page URLs, `fetch.py` asks `yt-dlp` for the duration before downloading; direct downloads are checked with `ffprobe` afterwards and deleted.
+- Longer than 60s (but within 3:00) with no range given → analyse the first 60s and warn; `--start/--end` override this.
 - No motion detected → report it explicitly (the clip is static, or the threshold is too high); no empty prompt is generated.
 
 ## Dependencies
